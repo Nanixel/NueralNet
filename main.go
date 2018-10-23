@@ -17,7 +17,7 @@ import (
 // 2nd = hidden layer
 // 3rd = output layer
 
-// Inputs: Measurements of Flowers (Independent Variable?)
+// Inputs: Measurements of Flowers (Independent Variable)
 // What we are trying to predict: Species of flower (based on measurement)
 
 /*
@@ -26,10 +26,23 @@ Neuron
 Activation: Is that nueron "on" or "off"
 Weights and Biases
 Back Propogation: An algorithm for how a SINGLE training example would like to "nudge" the outputted weights and bias based on whats expected.
-	Activation Function
+	Activation Function: The purpose of an activation function is to produce non-linearity into the output of a neuron.  Most real world data is non-linear.
 		Many choices but using: Sigmoid Function
+			Sigmoid: Takes a real-valued input and squashes it to range between 0 and 1
+			Others:
+				Tanh: Takes a real-valued input and squashes it to the range -1 and 1 -> tanh(x) = 2y(2x)
+				ReLu: Takes a real-valued input and thresholds it at zero (replaces negative values with zero) -> f(x) {return max(0,x)}
 			Dirivative: used for backpropogation
 Back Propogation Method
+	Three ways to affect the output of a neuron:
+		1. Increase bias b
+		2. Increase weights[i]
+			- increase weights that have the highest activation for the desired output in proportion to a(i)
+		3. Change activation function
+			- All weights that are positive get brighter, all weights that are negative get dimmer
+			- Change a(i) in proportion to w(i)
+	Gives you a list of nudges that you want to happen to the second to last layer (by adding together all of the desires for each output neuron aka how each output nueron wants the weights and biases to be adjusted)
+		- you can recrusively apply the same process to the weights and values of the previous layers (second to last layer acts as the output layer at this point)
 
 Stochastic Gradient Descent (SGD) to determine updates to weights and bias: Imaging a 3D field with random high and lowpoints this is known as a gradient.  We use stochastic gradient decent to find the lowest "valley" in this gradient.  The lowest "valley" corresponds to the lowest amount of error
 
@@ -125,6 +138,77 @@ func (nn *nueralNet) train(x, y *mat.Dense) error {
 	return nil
 }
 
-func (nn *nueralNet) backPropogate(x, y, wHidden, bHidden, wOut, bOut, output) error {
+func (nn *nueralNet) backPropogate(x, y, wHidden, bHidden, wOut, bOut, output *mat.Dense) error {
+
+	for i := 0; i < nn.config.numEpochs; i++ {
+		hiddenLayerInput := new(mat.Dense)
+		// Mul takes the product of a and b and places the result in the reciever
+		hiddenLayerInput.Mul(x, wHidden)
+		addBHidden := func(_, col int, v float64) float64 {
+			return v + bHidden.At(0, col)
+		}
+
+		// Apply the function fn to each of the elements in the referenced matrix
+		hiddenLayerInput.Apply(addBHidden, hiddenLayerInput)
+
+		hiddenLayerActivations := new(mat.Dense)
+
+		applySigmoid := func(_, _ int, v float64) float64 {
+			return sigmoid(v)
+		}
+
+		hiddenLayerActivations.Apply(applySigmoid, hiddenLayerInput)
+
+		outputLayerInput := new(mat.Dense)
+		outputLayerInput.Mul(hiddenLayerActivations, wOut)
+		addBOut := func(_, col int, v float64) float64 {
+			return v + bOut.At(0, col)
+		}
+		outputLayerInput.Apply(addBOut, outputLayerInput)
+		output.Apply(applySigmoid, outputLayerInput)
+
+		networkError := new(mat.Dense)
+		networkError.Sub(y, output) // subtract desired output from the actual output
+
+		slopeOutputLayer := new(mat.Dense)
+		applySigmoidPrime := func(_, _ int, v float64) float64 { return sigmoidPrime(v) }
+
+		slopeOutputLayer.Apply(applySigmoidPrime, output)
+		slopeHiddenLayer := new(mat.Dense)
+		slopeHiddenLayer.Apply(applySigmoidPrime, hiddenLayerActivations)
+
+		dOutput := new(mat.Dense)
+		dOutput.MulElem(networkError, slopeOutputLayer)
+		errorAtHiddenLayer := new(mat.Dense)
+		errorAtHiddenLayer.Mul(dOutput, wOut.T())
+
+		dHiddenLayer := new(mat.Dense)
+		dHiddenLayer.MulElem(errorAtHiddenLayer, slopeHiddenLayer)
+
+		wOutAdj := new(mat.Dense)
+		wOutAdj.Mul(hiddenLayerActivations.T(), dOutput)
+		wOutAdj.Scale(nn.config.learningRate, wOutAdj)
+		wOut.Add(wOut, wOutAdj)
+
+		bOutAdj, err := sumAlongAxis(0, dOutput)
+		if err != nil {
+			return err
+		}
+		bOutAdj.Scale(nn.config.learningRate, bOutAdj)
+		bOut.Add(bOut, bOutAdj)
+
+		wHiddenAdj := new(mat.Dense)
+		wHiddenAdj.Mul(x.T(), dHiddenLayer)
+		wHiddenAdj.Scale(nn.config.learningRate, wHiddenAdj)
+		wHidden.Add(wHidden, wHiddenAdj)
+
+		bHiddenAdj, err := sumAlongAxis(0, dHiddenLayer)
+		if err != nil {
+			return err
+		}
+		bHiddenAdj.Scale(nn.config.learningRate, bHiddenAdj)
+		bHidden.Add(bHidden, bHiddenAdj)
+	}
+
 	return nil
 }
